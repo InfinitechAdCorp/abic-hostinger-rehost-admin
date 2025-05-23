@@ -49,13 +49,13 @@ const PropertyImageSlider: React.FC<PropertyImageProps> = ({ images }) => {
             {images.map((image, index) => (
                 <div key={index} className="keen-slider__slide number-slide1">
                     <Image
-                      src={`${process.env.NEXT_PUBLIC_BASE_URL}/properties/images/${image}`}
+    src={`${process.env.NEXT_PUBLIC_BASE_URL}/properties/images/${image}`}
+    alt={`Property image ${index + 1}`}
+    className="w-full object-cover object-center rounded-lg"
+    height={450}
+    width={1000}
+/>
 
-                        alt={`Property image ${index + 1}`}
-                        className="w-full object-cover object-center rounded-lg"
-                        height={450}
-                        width={1000}
-                    />
                 </div>
             ))}
         </div>

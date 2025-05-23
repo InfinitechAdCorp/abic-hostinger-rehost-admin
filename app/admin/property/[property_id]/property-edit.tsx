@@ -1,24 +1,32 @@
-"use client";
+"use client"
+import { Button, Card, CardBody, Checkbox, CheckboxGroup, Divider, Input, Select, SelectItem } from "@heroui/react"
+import type React from "react"
+import { useState } from "react"
+import { ErrorMessage, Field, Form, Formik } from "formik"
+import * as Yup from "yup"
+import axios from "axios"
+import toast from "react-hot-toast"
+import useSWR from "swr"
+import { useRouter } from "next/navigation"
 import {
-  Button,
-  Card,
-  CardBody,
-  Checkbox,
-  CheckboxGroup,
-  Divider,
-  Input,
-  Select,
-  SelectItem,
-} from "@heroui/react";
-import React from "react";
-import { ErrorMessage, Field, Form, Formik } from "formik";
-import * as Yup from "yup";
-import axios from "axios";
-import toast from "react-hot-toast";
-import useSWR from "swr";
-import { useRouter } from "next/navigation"; // Import useRouter
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core"
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  rectSortingStrategy,
+} from "@dnd-kit/sortable"
+import { CSS } from "@dnd-kit/utilities"
 
-import type { PropertyRecord } from "@/app/utils/types";
+import type { PropertyRecord } from "@/app/utils/types"
 import {
   fetchWithToken,
   status,
@@ -30,21 +38,55 @@ import {
   payment,
   parking,
   rent,
-} from "@/app/admin/property/utils/option";
-import CustomInput from "@/components/input";
-import FormikCustomError from "@/components/formik-custom-error";
+} from "@/app/admin/property/utils/option"
+import CustomInput from "@/components/input"
+import FormikCustomError from "@/components/formik-custom-error"
 
 interface PropertyEditProps {
-  property_id: string;
+  property_id: string
+  onSuccess: () => void
+}
+
+// Sortable Image component
+function SortableImage({ id, url, onRemove }: { id: number; url: string; onRemove: (id: number) => void }) {
+  const { attributes, listeners, setNodeRef, transform, transition } = useSortable({ id })
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+  }
+
+  return (
+    <div ref={setNodeRef} style={style} className="relative cursor-move">
+      <div className="relative">
+        <img src={url || "/placeholder.svg"} alt={`Preview ${id}`} className="w-full h-32 object-cover rounded-md" />
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation() // Stop event propagation
+            onRemove(id)
+          }}
+          className="absolute top-1 right-1 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center z-10"
+        >
+          &times;
+        </button>
+        <div
+          {...attributes}
+          {...listeners}
+          className="absolute inset-0 bg-black bg-opacity-0 hover:bg-opacity-10 flex items-center justify-center"
+        >
+          <span className="text-transparent hover:text-white text-sm font-medium">Drag to reorder</span>
+        </div>
+      </div>
+    </div>
+  )
 }
 
 const validationSchema = Yup.object({
   // Personal Information
   first_name: Yup.string().required("First name is required"),
   last_name: Yup.string().required("Last name is required"),
-  email: Yup.string()
-    .email("Invalid email address")
-    .required("Email is required"),
+  email: Yup.string().email("Invalid email address").required("Email is required"),
   phone: Yup.string()
     .matches(/^[0-9]{11}$/, "Phone number must be 11 digits")
     .required("Phone number is required"),
@@ -70,68 +112,90 @@ const validationSchema = Yup.object({
   parking: Yup.boolean().required("Parking is required"),
   status: Yup.string().required("Property Status is required"),
   sale_type: Yup.string().required("Property Sale Type is required"),
-  amenities: Yup.array()
-    .min(1, "At least one amenity is required")
-    .required("Amenities are required"),
-});
+  amenities: Yup.array().min(1, "At least one amenity is required").required("Amenities are required"),
+})
 
-const PropertyEdit = ({ property_id, onSuccess }: { property_id: string, onSuccess: () => void }) => {
-  // ...
-  const router = useRouter(); // Initialize useRouter
+const PropertyEdit = ({ property_id, onSuccess }: PropertyEditProps) => {
+  const router = useRouter()
   const { data, mutate } = useSWR<PropertyRecord>(
     `${process.env.NEXT_PUBLIC_BASE_URL}/api/properties/${property_id}`,
-    fetchWithToken
-  );
-  const property = data?.record;
-  const parseAmenities = JSON.parse(property?.amenities || "[]");
-  const [selectedAmenities, setSelectedAmenities] =
-    React.useState(parseAmenities);
+    fetchWithToken,
+  )
+  const property = data?.record
+  const parseAmenities = JSON.parse(property?.amenities || "[]")
+  const [selectedAmenities, setSelectedAmenities] = useState(parseAmenities)
+
+  // State for drag and drop image functionality
+  const [imageFiles, setImageFiles] = useState<File[]>([])
+  const [previewUrls, setPreviewUrls] = useState<string[]>([])
+
+  // Setup sensors for drag and drop
+  const sensors = useSensors(
+    useSensor(PointerSensor),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    }),
+  )
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event
+
+    if (over && active.id !== over.id) {
+      setPreviewUrls((items) => {
+        const oldIndex = items.findIndex((_, index) => index === active.id)
+        const newIndex = items.findIndex((_, index) => index === over.id)
+
+        // Also reorder the actual files
+        setImageFiles((files) => {
+          return arrayMove([...files], oldIndex, newIndex)
+        })
+
+        return arrayMove(items, oldIndex, newIndex)
+      })
+    }
+  }
+
+  const handleRemoveImage = (index: number) => {
+    // Remove the image from the preview array
+    setPreviewUrls((prev) => prev.filter((_, i) => i !== index))
+    // Remove the file from the files array
+    setImageFiles((prev) => prev.filter((_, i) => i !== index))
+  }
 
   const handleSubmit = async (values: any, { setSubmitting }: any) => {
     try {
-      const formData = new FormData();
+      const formData = new FormData()
 
       Object.keys(values).forEach((key) => {
         if (key === "images") {
-          values.images.forEach((file: File) =>
+          // Use the reordered image files
+          imageFiles.forEach((file) => {
             formData.append("images[]", file)
-          );
+          })
         } else if (key === "amenities") {
-          values.amenities.forEach((amenity: string) =>
-            formData.append("amenities[]", amenity)
-          );
+          values.amenities.forEach((amenity: string) => formData.append("amenities[]", amenity))
         } else {
-          formData.append(
-            key,
-            key === "parking" ? String(values[key] ? 1 : 0) : values[key]
-          );
+          formData.append(key, key === "parking" ? String(values[key] ? 1 : 0) : values[key])
         }
-      });
+      })
 
-      const token = sessionStorage.getItem("token");
-      await axios.post(
-        `${process.env.NEXT_PUBLIC_BASE_URL}/api/properties`,
-        formData,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "Content-Type": "multipart/form-data",
-          },
-        }
-      );
+      const token = sessionStorage.getItem("token")
+      await axios.post(`${process.env.NEXT_PUBLIC_BASE_URL}/api/properties`, formData, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "multipart/form-data",
+        },
+      })
 
-      toast.success("Operation Success!");
-      mutate();
-      onSuccess();
-
-      // Redirect to the admin/property page after successful update
-      // router.push("/admin/property"); // Add this line
+      toast.success("Operation Success!")
+      mutate()
+      onSuccess()
     } catch (error) {
-      toast.error("Something went wrong.");
+      toast.error("Something went wrong.")
     } finally {
-      setSubmitting(false);
+      setSubmitting(false)
     }
-  };
+  }
 
   return (
     <div className="w-full">
@@ -184,9 +248,7 @@ const PropertyEdit = ({ property_id, onSuccess }: { property_id: string, onSucce
           >
             {({ errors, touched, isSubmitting, setFieldValue, values }) => (
               <Form className="space-y-4">
-                <h1 className="text-xl font-bold text-violet-800">
-                  Personal Information
-                </h1>
+                <h1 className="text-xl font-bold text-violet-800">Personal Information</h1>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
@@ -196,11 +258,8 @@ const PropertyEdit = ({ property_id, onSuccess }: { property_id: string, onSucce
                       label="First Name"
                       variant="flat"
                       onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
-                        const filteredValue = e.target.value.replace(
-                          /[^A-Za-z\s]/g,
-                          ""
-                        );
-                        setFieldValue("first_name", filteredValue);
+                        const filteredValue = e.target.value.replace(/[^A-Za-z\s]/g, "")
+                        setFieldValue("first_name", filteredValue)
                       }}
                     />
                     {touched.first_name && errors.first_name && (
@@ -214,16 +273,11 @@ const PropertyEdit = ({ property_id, onSuccess }: { property_id: string, onSucce
                       label="Last Name"
                       variant="flat"
                       onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
-                        const filteredValue = e.target.value.replace(
-                          /[^A-Za-z\s]/g,
-                          ""
-                        );
-                        setFieldValue("last_name", filteredValue);
+                        const filteredValue = e.target.value.replace(/[^A-Za-z\s]/g, "")
+                        setFieldValue("last_name", filteredValue)
                       }}
                     />
-                    {touched.last_name && errors.last_name && (
-                      <FormikCustomError>{errors.last_name}</FormikCustomError>
-                    )}
+                    {touched.last_name && errors.last_name && <FormikCustomError>{errors.last_name}</FormikCustomError>}
                   </div>
                 </div>
 
@@ -242,13 +296,11 @@ const PropertyEdit = ({ property_id, onSuccess }: { property_id: string, onSucce
                       variant="flat"
                       maxLength={11}
                       onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
-                        const value = e.target.value.replace(/\D/g, "");
-                        setFieldValue("phone", value.slice(0, 11));
+                        const value = e.target.value.replace(/\D/g, "")
+                        setFieldValue("phone", value.slice(0, 11))
                       }}
                     />
-                    {touched.phone && errors.phone && (
-                      <FormikCustomError>{errors.phone}</FormikCustomError>
-                    )}
+                    {touched.phone && errors.phone && <FormikCustomError>{errors.phone}</FormikCustomError>}
                   </div>
 
                   <Field
@@ -256,9 +308,7 @@ const PropertyEdit = ({ property_id, onSuccess }: { property_id: string, onSucce
                     label="Type"
                     name="type"
                     variant="flat"
-                    defaultSelectedKeys={
-                      property?.owner.type ? [String(property.owner.type)] : []
-                    }
+                    defaultSelectedKeys={property?.owner.type ? [String(property.owner.type)] : []}
                   >
                     {agents.map((agent) => (
                       <SelectItem key={agent.key} value={agent.key}>
@@ -266,17 +316,12 @@ const PropertyEdit = ({ property_id, onSuccess }: { property_id: string, onSucce
                       </SelectItem>
                     ))}
                   </Field>
-                  <ErrorMessage
-                    name="type"
-                    render={(msg) => <FormikCustomError children={msg} />}
-                  />
+                  <ErrorMessage name="type" render={(msg) => <FormikCustomError children={msg} />} />
                 </div>
 
                 <hr />
 
-                <h1 className="text-xl font-bold text-violet-800">
-                  Property Information
-                </h1>
+                <h1 className="text-xl font-bold text-violet-800">Property Information</h1>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <CustomInput
                     name="name"
@@ -289,40 +334,26 @@ const PropertyEdit = ({ property_id, onSuccess }: { property_id: string, onSucce
                     label="Unit Type"
                     name="unit_type"
                     variant="flat"
-                    defaultSelectedKeys={
-                      property?.unit_type ? [String(property.unit_type)] : []
-                    }
+                    defaultSelectedKeys={property?.unit_type ? [String(property.unit_type)] : []}
                   >
                     {type.map((type) => (
                       <SelectItem key={type.key}>{type.label}</SelectItem>
                     ))}
                   </Field>
-                  <ErrorMessage
-                    name="unit_type"
-                    render={(msg) => <FormikCustomError children={msg} />}
-                  />
+                  <ErrorMessage name="unit_type" render={(msg) => <FormikCustomError children={msg} />} />
 
                   <Field
                     as={Select}
                     label="Unit Status"
                     name="unit_status"
                     variant="flat"
-                    defaultSelectedKeys={
-                      property?.unit_status
-                        ? [String(property.unit_status)]
-                        : []
-                    }
+                    defaultSelectedKeys={property?.unit_status ? [String(property.unit_status)] : []}
                   >
                     {furnished.map((furnished) => (
-                      <SelectItem key={furnished.key}>
-                        {furnished.label}
-                      </SelectItem>
+                      <SelectItem key={furnished.key}>{furnished.label}</SelectItem>
                     ))}
                   </Field>
-                  <ErrorMessage
-                    name="unit_status"
-                    render={(msg) => <FormikCustomError children={msg} />}
-                  />
+                  <ErrorMessage name="unit_status" render={(msg) => <FormikCustomError children={msg} />} />
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                   <div>
@@ -332,13 +363,11 @@ const PropertyEdit = ({ property_id, onSuccess }: { property_id: string, onSucce
                       label="Property Price"
                       variant="flat"
                       onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
-                        const value = e.target.value.replace(/\D/g, "");
-                        setFieldValue("price", value);
+                        const value = e.target.value.replace(/\D/g, "")
+                        setFieldValue("price", value)
                       }}
                     />
-                    {touched.price && errors.price && (
-                      <FormikCustomError>{errors.price}</FormikCustomError>
-                    )}
+                    {touched.price && errors.price && <FormikCustomError>{errors.price}</FormikCustomError>}
                   </div>
                   <CustomInput
                     name="area"
@@ -360,8 +389,8 @@ const PropertyEdit = ({ property_id, onSuccess }: { property_id: string, onSucce
                     variant="flat"
                     defaultSelectedKeys={property?.parking ? ["1"] : ["0"]}
                     onChange={(e: React.ChangeEvent<HTMLSelectElement>) => {
-                      const val = e.target.value === "1";
-                      setFieldValue("parking", val);
+                      const val = e.target.value === "1"
+                      setFieldValue("parking", val)
                     }}
                   >
                     {parking.map((statusItem) => (
@@ -371,12 +400,7 @@ const PropertyEdit = ({ property_id, onSuccess }: { property_id: string, onSucce
                     ))}
                   </Field>
 
-                  <ErrorMessage
-                    name="parking"
-                    render={(msg) => (
-                      <FormikCustomError>{msg}</FormikCustomError>
-                    )}
-                  />
+                  <ErrorMessage name="parking" render={(msg) => <FormikCustomError>{msg}</FormikCustomError>} />
                 </div>
 
                 <CustomInput
@@ -392,9 +416,7 @@ const PropertyEdit = ({ property_id, onSuccess }: { property_id: string, onSucce
                     label="Property Status"
                     name="status"
                     variant="flat"
-                    defaultSelectedKeys={
-                      property?.status ? [String(property.status)] : []
-                    }
+                    defaultSelectedKeys={property?.status ? [String(property.status)] : []}
                   >
                     {status.map((statusItem) => (
                       <SelectItem key={statusItem.key} value={statusItem.key}>
@@ -402,10 +424,7 @@ const PropertyEdit = ({ property_id, onSuccess }: { property_id: string, onSucce
                       </SelectItem>
                     ))}
                   </Field>
-                  <ErrorMessage
-                    name="status"
-                    render={(msg) => <FormikCustomError children={msg} />}
-                  />
+                  <ErrorMessage name="status" render={(msg) => <FormikCustomError children={msg} />} />
 
                   {values.status === "For Sale" && (
                     <>
@@ -414,25 +433,15 @@ const PropertyEdit = ({ property_id, onSuccess }: { property_id: string, onSucce
                         label="Sale Type"
                         name="sale_type"
                         variant="flat"
-                        defaultSelectedKeys={
-                          property?.sale_type
-                            ? [String(property.sale_type)]
-                            : []
-                        }
+                        defaultSelectedKeys={property?.sale_type ? [String(property.sale_type)] : []}
                       >
                         {sale.map((statusItem) => (
-                          <SelectItem
-                            key={statusItem.key}
-                            value={statusItem.key}
-                          >
+                          <SelectItem key={statusItem.key} value={statusItem.key}>
                             {statusItem.label}
                           </SelectItem>
                         ))}
                       </Field>
-                      <ErrorMessage
-                        name="sale_type"
-                        render={(msg) => <FormikCustomError children={msg} />}
-                      />
+                      <ErrorMessage name="sale_type" render={(msg) => <FormikCustomError children={msg} />} />
 
                       {values.sale_type == "RFO" && (
                         <>
@@ -441,27 +450,15 @@ const PropertyEdit = ({ property_id, onSuccess }: { property_id: string, onSucce
                             label="Payment Type"
                             name="payment"
                             variant="flat"
-                            defaultSelectedKeys={
-                              property?.payment
-                                ? [String(property.payment)]
-                                : []
-                            }
+                            defaultSelectedKeys={property?.payment ? [String(property.payment)] : []}
                           >
                             {payment.map((statusItem) => (
-                              <SelectItem
-                                key={statusItem.key}
-                                value={statusItem.key}
-                              >
+                              <SelectItem key={statusItem.key} value={statusItem.key}>
                                 {statusItem.label}
                               </SelectItem>
                             ))}
                           </Field>
-                          <ErrorMessage
-                            name="payment"
-                            render={(msg) => (
-                              <FormikCustomError children={msg} />
-                            )}
-                          />
+                          <ErrorMessage name="payment" render={(msg) => <FormikCustomError children={msg} />} />
 
                           <CustomInput
                             name="title"
@@ -478,9 +475,7 @@ const PropertyEdit = ({ property_id, onSuccess }: { property_id: string, onSucce
                             name="turnover"
                             label="Turnover Date"
                             type="date"
-                            error={
-                              touched.turnover ? errors.turnover : undefined
-                            }
+                            error={touched.turnover ? errors.turnover : undefined}
                           />
                         </>
                       )}
@@ -494,15 +489,10 @@ const PropertyEdit = ({ property_id, onSuccess }: { property_id: string, onSucce
                         label="Payment Terms"
                         name="terms"
                         variant="flat"
-                        defaultSelectedKeys={
-                          property?.terms ? [String(property.terms)] : []
-                        }
+                        defaultSelectedKeys={property?.terms ? [String(property.terms)] : []}
                       >
                         {rent.map((statusItem) => (
-                          <SelectItem
-                            key={statusItem.key}
-                            value={statusItem.key}
-                          >
+                          <SelectItem key={statusItem.key} value={statusItem.key}>
                             {statusItem.label}
                           </SelectItem>
                         ))}
@@ -512,16 +502,14 @@ const PropertyEdit = ({ property_id, onSuccess }: { property_id: string, onSucce
                 </div>
 
                 <Divider />
-                <div className="text-violet-700 font-semibold">
-                  Features and Amenities
-                </div>
+                <div className="text-violet-700 font-semibold">Features and Amenities</div>
                 <CheckboxGroup
                   color="primary"
                   orientation="horizontal"
                   value={selectedAmenities}
                   onValueChange={(values) => {
-                    setSelectedAmenities(values);
-                    setFieldValue("amenities", values);
+                    setSelectedAmenities(values)
+                    setFieldValue("amenities", values)
                   }}
                 >
                   {amenities.map((amenitiesItem) => (
@@ -530,48 +518,52 @@ const PropertyEdit = ({ property_id, onSuccess }: { property_id: string, onSucce
                     </Checkbox>
                   ))}
                 </CheckboxGroup>
-                <ErrorMessage
-                  name="amenities"
-                  render={(msg) => <FormikCustomError children={msg} />}
-                />
-                <p className="text-default-500 text-small">
-                  Selected: {selectedAmenities.join(", ")}
-                </p>
-                <Field name="images">
-                  {({ form }: { form: any }) => (
-                    <>
-                      <Input
-                        id="images"
-                        type="file"
-                        size="lg"
-                        multiple
-                        accept="image/*"
-                        onChange={(event) => {
-                          const files = event.currentTarget.files;
-                          if (files) {
-                            form.setFieldValue("images", Array.from(files));
-                          }
-                        }}
-                        variant="flat"
-                      />
-                      {form.values.images && form.values.images.length > 0 && (
-                        <div className="mt-4 grid grid-cols-2 md:grid-cols-4 gap-4">
-                          {form.values.images.map(
-                            (file: File, index: number) => (
-                              <div key={index} className="relative">
-                                <img
-                                  src={URL.createObjectURL(file)}
-                                  alt={`Preview ${index}`}
-                                  className="w-full h-auto object-cover"
-                                />
-                              </div>
-                            )
-                          )}
+                <ErrorMessage name="amenities" render={(msg) => <FormikCustomError children={msg} />} />
+                <p className="text-default-500 text-small">Selected: {selectedAmenities.join(", ")}</p>
+
+                {/* Property Image Section with Drag and Drop */}
+                <div>
+                  <label htmlFor="images" className="block text-sm font-medium text-gray-700 mb-2">
+                    Upload Images
+                  </label>
+                  <Input
+                    id="images"
+                    type="file"
+                    size="lg"
+                    multiple
+                    accept="image/*"
+                    onChange={(event) => {
+                      const files = event.currentTarget.files
+                      if (files) {
+                        const filesArray = Array.from(files)
+                        setImageFiles(filesArray)
+                        setFieldValue("images", filesArray)
+
+                        // Create preview URLs
+                        const urlsArray = filesArray.map((file) => URL.createObjectURL(file))
+                        setPreviewUrls(urlsArray)
+                      }
+                    }}
+                    variant="flat"
+                  />
+                </div>
+
+                {/* Drag and Drop Image Preview Section */}
+                {previewUrls.length > 0 && (
+                  <div className="mt-4">
+                    <p className="text-sm font-medium text-gray-700 mb-2">Drag and drop to reorder images:</p>
+                    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+                      <SortableContext items={previewUrls.map((_, index) => index)} strategy={rectSortingStrategy}>
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                          {previewUrls.map((url, index) => (
+                            <SortableImage key={index} id={index} url={url} onRemove={handleRemoveImage} />
+                          ))}
                         </div>
-                      )}
-                    </>
-                  )}
-                </Field>
+                      </SortableContext>
+                    </DndContext>
+                  </div>
+                )}
+
                 <Button
                   type="submit"
                   color="primary"
@@ -587,7 +579,7 @@ const PropertyEdit = ({ property_id, onSuccess }: { property_id: string, onSucce
         </CardBody>
       </Card>
     </div>
-  );
-};
+  )
+}
 
-export default PropertyEdit;
+export default PropertyEdit

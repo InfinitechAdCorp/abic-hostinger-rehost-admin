@@ -48,7 +48,7 @@ const Navbar: React.FC = () => {
             {/* Mobile Logo */}
             <a href="/" className="md:hidden">
               <img
-                src="https://abicmanpowerservicecorp.com/media/abicrealty.png"
+                src="https://abicmanpowerservicecorp.com/media/ABIC Realty.png"
                 className="h-12"
                 alt="Abic Realty & Consultancy Corporation"
               />
@@ -70,7 +70,7 @@ const Navbar: React.FC = () => {
         <div className="hidden md:flex justify-center py-6">
           <a href="/">
             <img
-              src="https://abicmanpowerservicecorp.com/media/abicrealty.png"
+              src="https://abicmanpowerservicecorp.com/media/ABIC Realty.png"
               alt="Abic Realty & Consultancy Corporation"
               className="h-20"
             />

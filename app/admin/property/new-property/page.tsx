@@ -1,20 +1,30 @@
-"use client";
-import { useRouter } from "next/navigation";
+"use client"
+import { useRouter } from "next/navigation"
+import { Button, Card, CardBody, Divider, Input, Select, SelectItem } from "@heroui/react"
+import type React from "react"
+import { useState } from "react"
+import { FaArrowRightLong } from "react-icons/fa6"
+import { useFormik } from "formik"
+import * as Yup from "yup"
+import axios from "axios"
+import toast from "react-hot-toast"
 import {
-  Button,
-  Card,
-  CardBody,
-  Divider,
-  Input,
-  Select,
-  SelectItem,
-} from "@heroui/react";
-import React, { useState } from "react";
-import { FaArrowRightLong } from "react-icons/fa6";
-import { useFormik } from "formik";
-import * as Yup from "yup";
-import axios from "axios";
-import toast from "react-hot-toast";
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core"
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  rectSortingStrategy,
+} from "@dnd-kit/sortable"
+import { CSS } from "@dnd-kit/utilities"
 
 import {
   agents,
@@ -27,16 +37,13 @@ import {
   sale,
   payment,
   amenities,
-} from "@/app/admin/property/utils/option";
-import { Router } from "next/router";
+} from "@/app/admin/property/utils/option"
 
 const validationSchema = Yup.object({
   // Personal Information
   first_name: Yup.string().required("First name is required"),
   last_name: Yup.string().required("Last name is required"),
-  email: Yup.string()
-    .email("Invalid email address")
-    .required("Email is required"),
+  email: Yup.string().email("Invalid email address").required("Email is required"),
   phone: Yup.string()
     .matches(/^[0-9]{11}$/, "Phone number must be 11 digits")
     .required("Phone number is required"),
@@ -61,20 +68,72 @@ const validationSchema = Yup.object({
     .required("Floor number is required"),
   parking: Yup.boolean().required("Parking is required"),
   status: Yup.string().required("Property Status is required"),
-  amenities: Yup.array()
-    .of(Yup.string())
-    .min(1, "At least one amenity is required")
-    .required("Amenities are required"),
+  amenities: Yup.array().of(Yup.string()).min(1, "At least one amenity is required").required("Amenities are required"),
   images: Yup.mixed().required("Image is required"),
-});
+})
+
+// Sortable Image component
+function SortableImage({ id, url, onRemove }: { id: number; url: string; onRemove: (id: number) => void }) {
+  const { attributes, listeners, setNodeRef, transform, transition } = useSortable({ id })
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+  }
+
+  return (
+    <div ref={setNodeRef} style={style} className="relative cursor-move">
+      <div {...attributes} {...listeners} className="relative">
+        <img src={url || "/placeholder.svg"} alt={`Preview ${id}`} className="w-full h-32 object-cover rounded-md" />
+        <button
+          type="button"
+          onClick={() => onRemove(id)}
+          className="absolute top-0 right-0 bg-red-500 text-white rounded-full p-1"
+        >
+          &times;
+        </button>
+        <div className="absolute inset-0 bg-black bg-opacity-0 hover:bg-opacity-10 flex items-center justify-center">
+          <span className="text-transparent hover:text-white text-sm font-medium">Drag to reorder</span>
+        </div>
+      </div>
+    </div>
+  )
+}
 
 const NewPropertyPage = () => {
-  const [selectedStatus, setSelectedStatus] = useState("");
-  const [selectedtPayment, setSelectedPayment] = useState("");
-  const [loading, setLoading] = useState<boolean>(false);
-  const [propertyStatus, setPropertyStatus] = useState("");
-  const [previewImages, setPreviewImages] = useState<string[]>([]);
-  const router = useRouter();
+  const [selectedStatus, setSelectedStatus] = useState("")
+  const [selectedtPayment, setSelectedPayment] = useState("")
+  const [loading, setLoading] = useState<boolean>(false)
+  const [propertyStatus, setPropertyStatus] = useState("")
+  const [previewImages, setPreviewImages] = useState<string[]>([])
+  const [imageFiles, setImageFiles] = useState<File[]>([])
+  const router = useRouter()
+
+  // Setup sensors for drag and drop
+  const sensors = useSensors(
+    useSensor(PointerSensor),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    }),
+  )
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event
+
+    if (over && active.id !== over.id) {
+      setPreviewImages((items) => {
+        const oldIndex = items.findIndex((_, index) => index === active.id)
+        const newIndex = items.findIndex((_, index) => index === over.id)
+
+        // Also reorder the actual files
+        setImageFiles((files) => {
+          return arrayMove([...files], oldIndex, newIndex)
+        })
+
+        return arrayMove(items, oldIndex, newIndex)
+      })
+    }
+  }
 
   const formik = useFormik({
     initialValues: {
@@ -112,74 +171,85 @@ const NewPropertyPage = () => {
     validationSchema,
 
     onSubmit: async (values, { resetForm }) => {
-      setLoading(true);
+      setLoading(true)
 
       try {
-        const formData = new FormData();
-        const endpoint = `${process.env.NEXT_PUBLIC_BASE_URL}/api/properties`;
-        const token = sessionStorage.getItem("token");
+        const formData = new FormData()
+        const endpoint = `${process.env.NEXT_PUBLIC_BASE_URL}/api/properties`
+        const token = sessionStorage.getItem("token")
 
         Object.entries(values).forEach(([key, value]: [string, unknown]) => {
-          if (key === "images" && value instanceof FileList) {
-            Array.from(value).forEach((file) => {
-              formData.append("images[]", file);
-            });
+          if (key === "images") {
+            // Use the reordered image files
+            imageFiles.forEach((file) => {
+              formData.append("images[]", file)
+            })
           } else if (key === "amenities" && Array.isArray(value)) {
             value.forEach((amenity) => {
-              formData.append("amenities[]", amenity);
-            });
+              formData.append("amenities[]", amenity)
+            })
           } else if (typeof value === "string" || typeof value === "number") {
-            formData.append(key, value.toString());
+            formData.append(key, value.toString())
           }
-        });
+        })
 
         const response = await axios.post(endpoint, formData, {
           headers: {
             Authorization: `Bearer ${token}`,
             "Content-Type": "multipart/form-data",
           },
-        });
+        })
 
-        router.replace("/admin/property");
-        toast.success("Operation successful!");
-        resetForm();
+        router.replace("/admin/property")
+        toast.success("Operation successful!")
+        resetForm()
+        setPreviewImages([])
+        setImageFiles([])
       } catch (error) {
         if (axios.isAxiosError(error)) {
           if (error.response) {
-            toast.error(
-              error.response.data.message ||
-                "Failed to submit inquiry. Please try again later."
-            );
+            toast.error(error.response.data.message || "Failed to submit inquiry. Please try again later.")
           } else if (error.request) {
-            toast.error("No response from server. Please try again later.");
+            toast.error("No response from server. Please try again later.")
           }
         } else {
-          toast.error("Unexpected error occurred. Please try again.");
+          toast.error("Unexpected error occurred. Please try again.")
         }
       } finally {
-        setLoading(false);
+        setLoading(false)
       }
     },
-  });
+  })
 
   const handleStatusChange = (value: string): void => {
-    setSelectedStatus(value);
-  };
+    setSelectedStatus(value)
+  }
 
   const handlePaymentChange = (value: string): void => {
-    setSelectedPayment(value);
-  };
+    setSelectedPayment(value)
+  }
+
+  const handleRemoveImage = (index: number) => {
+    // Remove the image from the preview array
+    setPreviewImages((prev) => prev.filter((_, i) => i !== index))
+    // Remove the file from the files array
+    setImageFiles((prev) => prev.filter((_, i) => i !== index))
+
+    // If no images left, reset the formik field
+    if (previewImages.length <= 1) {
+      formik.setFieldValue("images", "")
+    }
+  }
 
   return (
     <section className="pt-24 px-4 md:px-12">
       <form onSubmit={formik.handleSubmit}>
         <Card className="w-full">
           <CardBody>
+            {/* Personal Information Section */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 py-6 md:px-6">
               <div className="col-span-2 py-6">
-                <h1 className="text-xl font-semibold text-violet-800">
-                  Personal Information
-                </h1>
+                <h1 className="text-xl font-semibold text-violet-800">Personal Information</h1>
               </div>
               <div className="col-span-2 md:col-span-1">
                 <Input
@@ -190,15 +260,13 @@ const NewPropertyPage = () => {
                   value={formik.values.first_name}
                   onBlur={formik.handleBlur}
                   onChange={(e) => {
-                    const value = e.target.value.replace(/[^A-Za-z\s]/g, "");
-                    formik.setFieldValue("first_name", value);
+                    const value = e.target.value.replace(/[^A-Za-z\s]/g, "")
+                    formik.setFieldValue("first_name", value)
                   }}
                 />
 
                 {formik.touched.first_name && formik.errors.first_name && (
-                  <p className="text-red-500 text-sm">
-                    {formik.errors.first_name}
-                  </p>
+                  <p className="text-red-500 text-sm">{formik.errors.first_name}</p>
                 )}
               </div>
               <div className="col-span-2 md:col-span-1">
@@ -210,14 +278,12 @@ const NewPropertyPage = () => {
                   value={formik.values.last_name}
                   onBlur={formik.handleBlur}
                   onChange={(e) => {
-                    const value = e.target.value.replace(/[^A-Za-z\s]/g, "");
-                    formik.setFieldValue("last_name", value);
+                    const value = e.target.value.replace(/[^A-Za-z\s]/g, "")
+                    formik.setFieldValue("last_name", value)
                   }}
                 />
                 {formik.touched.last_name && formik.errors.last_name && (
-                  <p className="text-red-500 text-sm">
-                    {formik.errors.last_name}
-                  </p>
+                  <p className="text-red-500 text-sm">{formik.errors.last_name}</p>
                 )}
               </div>
               <div className="col-span-2 md:col-span-1">
@@ -245,8 +311,8 @@ const NewPropertyPage = () => {
                   value={formik.values.phone}
                   onBlur={formik.handleBlur}
                   onChange={(e) => {
-                    const value = e.target.value.replace(/\D/g, "");
-                    formik.setFieldValue("phone", value.slice(0, 11));
+                    const value = e.target.value.replace(/\D/g, "")
+                    formik.setFieldValue("phone", value.slice(0, 11))
                   }}
                 />
                 {formik.touched.phone && formik.errors.phone && (
@@ -276,20 +342,17 @@ const NewPropertyPage = () => {
                 {formik.values.type && (
                   <>
                     <div className="col-span-2 md:col-span-1">
-                      <p className="text-gray-700 text-sm">
-                        {agreementMessages[formik.values.type]}
-                      </p>
+                      <p className="text-gray-700 text-sm">{agreementMessages[formik.values.type]}</p>
                     </div>
                   </>
                 )}
               </div>
             </div>
 
+            {/* Property Information Section */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 py-6 md:px-6">
               <div className="col-span-3 py-6">
-                <h1 className="text-xl font-semibold text-violet-800">
-                  Property Information
-                </h1>
+                <h1 className="text-xl font-semibold text-violet-800">Property Information</h1>
               </div>
               <div className="col-span-3 md:col-span-1">
                 <Input
@@ -310,9 +373,7 @@ const NewPropertyPage = () => {
                   label="Unit Type"
                   name="unit_type"
                   placeholder="eg. 1 BR"
-                  onChange={(e) =>
-                    formik.setFieldValue("unit_type", e.target.value)
-                  }
+                  onChange={(e) => formik.setFieldValue("unit_type", e.target.value)}
                 >
                   {type.map((type) => (
                     <SelectItem key={type.key}>{type.label}</SelectItem>
@@ -320,9 +381,7 @@ const NewPropertyPage = () => {
                 </Select>
 
                 {formik.touched.unit_type && formik.errors.unit_type && (
-                  <p className="text-red-500 text-sm">
-                    {formik.errors.unit_type}
-                  </p>
+                  <p className="text-red-500 text-sm">{formik.errors.unit_type}</p>
                 )}
               </div>
 
@@ -331,20 +390,14 @@ const NewPropertyPage = () => {
                   label="Unit Status"
                   name="unit_status"
                   placeholder="Fully Furnished"
-                  onChange={(e) =>
-                    formik.setFieldValue("unit_status", e.target.value)
-                  }
+                  onChange={(e) => formik.setFieldValue("unit_status", e.target.value)}
                 >
                   {furnished.map((furnished) => (
-                    <SelectItem key={furnished.key}>
-                      {furnished.label}
-                    </SelectItem>
+                    <SelectItem key={furnished.key}>{furnished.label}</SelectItem>
                   ))}
                 </Select>
                 {formik.touched.unit_status && formik.errors.unit_status && (
-                  <p className="text-red-500 text-sm">
-                    {formik.errors.unit_status}
-                  </p>
+                  <p className="text-red-500 text-sm">{formik.errors.unit_status}</p>
                 )}
               </div>
 
@@ -359,9 +412,7 @@ const NewPropertyPage = () => {
                   onChange={formik.handleChange}
                 />
                 {formik.touched.location && formik.errors.location && (
-                  <p className="text-red-500 text-sm">
-                    {formik.errors.location}
-                  </p>
+                  <p className="text-red-500 text-sm">{formik.errors.location}</p>
                 )}
               </div>
 
@@ -374,8 +425,8 @@ const NewPropertyPage = () => {
                   value={formik.values.price}
                   onBlur={formik.handleBlur}
                   onChange={(e) => {
-                    const value = e.target.value.replace(/\D/g, "");
-                    formik.setFieldValue("price", value);
+                    const value = e.target.value.replace(/\D/g, "")
+                    formik.setFieldValue("price", value)
                   }}
                 />
                 {formik.touched.price && formik.errors.price && (
@@ -409,9 +460,7 @@ const NewPropertyPage = () => {
                   onChange={formik.handleChange}
                 />
                 {formik.touched.unit_number && formik.errors.unit_number && (
-                  <p className="text-red-500 text-sm">
-                    {formik.errors.unit_number}
-                  </p>
+                  <p className="text-red-500 text-sm">{formik.errors.unit_number}</p>
                 )}
               </div>
 
@@ -420,18 +469,14 @@ const NewPropertyPage = () => {
                   label="Parking"
                   name="parking"
                   placeholder="Select Parking"
-                  onChange={(e) =>
-                    formik.setFieldValue("parking", e.target.value)
-                  }
+                  onChange={(e) => formik.setFieldValue("parking", e.target.value)}
                 >
                   {parking.map((parking) => (
                     <SelectItem key={parking.key}>{parking.label}</SelectItem>
                   ))}
                 </Select>
                 {formik.touched.parking && formik.errors.parking && (
-                  <p className="text-red-500 text-sm">
-                    {formik.errors.parking}
-                  </p>
+                  <p className="text-red-500 text-sm">{formik.errors.parking}</p>
                 )}
               </div>
 
@@ -442,8 +487,8 @@ const NewPropertyPage = () => {
                   placeholder="Property Status"
                   value={formik.values.status}
                   onChange={(e) => {
-                    const value = e.target.value;
-                    formik.setFieldValue("status", e.target.value);
+                    const value = e.target.value
+                    formik.setFieldValue("status", e.target.value)
                   }}
                 >
                   {status.map((statusItem) => (
@@ -464,9 +509,7 @@ const NewPropertyPage = () => {
                     name="terms"
                     placeholder="Lease Term"
                     value={formik.values.terms}
-                    onChange={(e) =>
-                      formik.setFieldValue("terms", e.target.value)
-                    }
+                    onChange={(e) => formik.setFieldValue("terms", e.target.value)}
                   >
                     {rent.map((rentItem) => (
                       <SelectItem key={rentItem.key} value={rentItem.key}>
@@ -485,9 +528,7 @@ const NewPropertyPage = () => {
                       name="sale_type"
                       placeholder="Select Sale Type"
                       value={formik.values.sale_type}
-                      onChange={(e) =>
-                        formik.setFieldValue("sale_type", e.target.value)
-                      }
+                      onChange={(e) => formik.setFieldValue("sale_type", e.target.value)}
                     >
                       {sale.map((saleItem) => (
                         <SelectItem key={saleItem.key} value={saleItem.key}>
@@ -505,15 +546,10 @@ const NewPropertyPage = () => {
                           name="payment"
                           placeholder="Select Payment Type"
                           value={formik.values.payment}
-                          onChange={(e) =>
-                            formik.setFieldValue("payment", e.target.value)
-                          }
+                          onChange={(e) => formik.setFieldValue("payment", e.target.value)}
                         >
                           {payment.map((paymentItem) => (
-                            <SelectItem
-                              key={paymentItem.key}
-                              value={paymentItem.key}
-                            >
+                            <SelectItem key={paymentItem.key} value={paymentItem.key}>
                               {paymentItem.label}
                             </SelectItem>
                           ))}
@@ -531,9 +567,7 @@ const NewPropertyPage = () => {
                           onChange={formik.handleChange}
                         />
                         {formik.touched.title && formik.errors.title && (
-                          <p className="text-red-500 text-sm">
-                            {formik.errors.title}
-                          </p>
+                          <p className="text-red-500 text-sm">{formik.errors.title}</p>
                         )}
                       </div>
                     </>
@@ -551,9 +585,7 @@ const NewPropertyPage = () => {
                         onChange={formik.handleChange}
                       />
                       {formik.touched.turnover && formik.errors.turnover && (
-                        <p className="text-red-500 text-sm">
-                          {formik.errors.turnover}
-                        </p>
+                        <p className="text-red-500 text-sm">{formik.errors.turnover}</p>
                       )}
                     </div>
                   )}
@@ -563,19 +595,16 @@ const NewPropertyPage = () => {
 
             <Divider className="my-4" />
 
+            {/* Features and Amenities Section */}
             <div className="md:px-6">
-              <h1 className="text-xl font-semibold text-violet-800">
-                Features and Amenities
-              </h1>
+              <h1 className="text-xl font-semibold text-violet-800">Features and Amenities</h1>
 
               <div className="py-8">
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
                   {amenities.map((amenitiesItem) => (
                     <div key={amenitiesItem.key} className="flex items-center">
                       <input
-                        checked={formik.values.amenities.includes(
-                          amenitiesItem.key
-                        )}
+                        checked={formik.values.amenities.includes(amenitiesItem.key)}
                         className="w-4 h-4"
                         id={amenitiesItem.key}
                         type="checkbox"
@@ -583,45 +612,31 @@ const NewPropertyPage = () => {
                         name="amenities"
                         onChange={(e) => {
                           if (e.target.checked) {
-                            formik.setFieldValue("amenities", [
-                              ...formik.values.amenities,
-                              amenitiesItem.key,
-                            ]);
+                            formik.setFieldValue("amenities", [...formik.values.amenities, amenitiesItem.key])
                           } else {
                             formik.setFieldValue(
                               "amenities",
-                              formik.values.amenities.filter(
-                                (key) => key !== amenitiesItem.key
-                              )
-                            );
+                              formik.values.amenities.filter((key) => key !== amenitiesItem.key),
+                            )
                           }
                         }}
                       />
-                      <label
-                        className="ms-2 text-md font-medium text-default-500"
-                        htmlFor={amenitiesItem.key}
-                      >
+                      <label className="ms-2 text-md font-medium text-default-500" htmlFor={amenitiesItem.key}>
                         {amenitiesItem.label}
                       </label>
                     </div>
                   ))}
 
                   {formik.errors.amenities && formik.touched.amenities && (
-                    <div className="text-red-500 text-sm">
-                      {formik.errors.amenities}
-                    </div>
+                    <div className="text-red-500 text-sm">{formik.errors.amenities}</div>
                   )}
                 </div>
               </div>
 
-              <h1 className="text-xl font-semibold text-violet-800">
-                Property Image
-              </h1>
+              {/* Property Image Section with Drag and Drop */}
+              <h1 className="text-xl font-semibold text-violet-800">Property Image</h1>
               <div className="col-span-3 md:col-span-1 py-8">
-                <label
-                  htmlFor="images"
-                  className="block text-sm font-medium text-gray-700"
-                >
+                <label htmlFor="images" className="block text-sm font-medium text-gray-700">
                   Upload Image
                 </label>
                 <Input
@@ -632,51 +647,40 @@ const NewPropertyPage = () => {
                   accept="image/*"
                   className="w-full col-span-1 mt-1 block"
                   onChange={(event: React.ChangeEvent<HTMLInputElement>) => {
-                    const files = event.currentTarget.files;
+                    const files = event.currentTarget.files
 
                     if (files) {
-                      formik.setFieldValue("images", files);
-                      const fileArray = Array.from(files).map((file) =>
-                        URL.createObjectURL(file)
-                      );
-                      setPreviewImages(fileArray);
+                      formik.setFieldValue("images", files)
+
+                      // Store the actual files for submission
+                      const filesArray = Array.from(files)
+                      setImageFiles(filesArray)
+
+                      // Create preview URLs
+                      const fileArray = filesArray.map((file) => URL.createObjectURL(file))
+                      setPreviewImages(fileArray)
                     }
                   }}
                 />
                 {formik.errors.images && formik.touched.images && (
-                  <div className="text-red-500 text-sm">
-                    {formik.errors.images}
+                  <div className="text-red-500 text-sm">{formik.errors.images}</div>
+                )}
+
+                {/* Drag and Drop Image Preview Section */}
+                {previewImages.length > 0 && (
+                  <div className="mt-4">
+                    <p className="text-sm font-medium text-gray-700 mb-2">Drag and drop to reorder images:</p>
+                    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+                      <SortableContext items={previewImages.map((_, index) => index)} strategy={rectSortingStrategy}>
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                          {previewImages.map((image, index) => (
+                            <SortableImage key={index} id={index} url={image} onRemove={handleRemoveImage} />
+                          ))}
+                        </div>
+                      </SortableContext>
+                    </DndContext>
                   </div>
                 )}
-                <div className="mt-4 grid grid-cols-2 md:grid-cols-4 gap-4">
-                  {previewImages.map((image, index) => (
-                    <div key={index} className="relative">
-                      <img
-                        src={image}
-                        alt={`Preview ${index}`}
-                        className="w-full h-32 object-cover rounded-md"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => {
-                          // Remove the image from the preview array
-                          setPreviewImages((prev) =>
-                            prev.filter((_, i) => i !== index)
-                          );
-                          // Remove the file from Formik's state
-                          const currentFiles = formik.values.images;
-                          const updatedFiles = Array.from(currentFiles).filter(
-                            (_, i) => i !== index
-                          );
-                          formik.setFieldValue("images", updatedFiles);
-                        }}
-                        className="absolute top-0 right-0 bg-red-500 text-white rounded-full p-1"
-                      >
-                        &times;
-                      </button>
-                    </div>
-                  ))}
-                </div>
               </div>
 
               <Button
@@ -693,7 +697,7 @@ const NewPropertyPage = () => {
         </Card>
       </form>
     </section>
-  );
-};
+  )
+}
 
-export default NewPropertyPage;
+export default NewPropertyPage
